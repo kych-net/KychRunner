@@ -1,8 +1,11 @@
-//! 模式 B 快照解包：主服务把 PG 里的 Git 对象打包成 tar.gz 下发。
+//! 工作树解包：主服务把 PG 里的 Git 对象展开成 tar.gz。
 //!
-//! tar 布局（见 docs/protocol.md）：
-//!   code/<仓库内相对路径>      完整代码快照（commit_oid）
-//!   definitions/<文件名>       默认分支 workflow_dir 下的 *.yml|*.yaml（def_commit_oid）
+//! 两种布局（见 docs/protocol.md）：
+//!
+//! - v2（默认）：`/git/<项目>/archive`，条目路径**直接是仓库相对路径**，
+//!   全部落到 workspace；定义另由 `tree` + `file` 从默认分支拉取。
+//! - v1（兼容回退）：`/api/runner/jobs/{id}/snapshot`，`code/` 与
+//!   `definitions/` 两个前缀分流。
 //!
 //! 解包后工作区是**纯文件树，没有 .git 目录**，也不调用任何 git 命令。
 //! 这里做纵深防御：即便主服务被绕过或打包出错，也不允许写出工作区之外。
@@ -188,6 +191,84 @@ pub fn unpack(
     Ok(stats)
 }
 
+/// protocol v2：解包 `/git/<项目>/archive`（无前缀，仓库相对路径直接落到 workspace）。
+///
+/// 校验规则与 v1 `unpack()` 完全一致：只允许普通文件 / 目录，拒绝链接、
+/// 路径穿越、`.git` 段、非 UTF-8、超限字节 / 条目 / 层级。
+pub fn unpack_plain(
+    gz_path: &Path,
+    workspace: &Path,
+    limits: &UnpackLimits,
+) -> Result<UnpackStats> {
+    fs::create_dir_all(workspace).context("创建 workspace 失败")?;
+
+    let file = File::open(gz_path).with_context(|| format!("打开 {} 失败", gz_path.display()))?;
+    let mut archive = Archive::new(GzDecoder::new(file));
+    let mut stats = UnpackStats::default();
+    let mut entries: usize = 0;
+
+    for entry in archive.entries().context("读取 tar 条目失败")? {
+        let mut entry = entry.context("tar 条目损坏")?;
+        entries += 1;
+        if entries > limits.max_entries {
+            bail!("tar 条目数超过上限 {}", limits.max_entries);
+        }
+
+        let entry_type = entry.header().entry_type();
+        if !entry_type.is_file() && !entry_type.is_dir() {
+            bail!(
+                "拒绝非普通文件条目（{:?}）：{}",
+                entry_type,
+                entry
+                    .path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default()
+            );
+        }
+        let size = entry.header().size().context("读取条目大小失败")?;
+        let raw = entry.path().context("读取条目路径失败")?.to_path_buf();
+        let rel = validate_relative(&raw, limits.max_depth)?;
+        let dest = workspace.join(&rel);
+
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("创建 {} 失败", parent.display()))?;
+        }
+        ensure_within(&dest, workspace)?;
+        if let Ok(md) = fs::symlink_metadata(&dest) {
+            if md.file_type().is_symlink() {
+                bail!("目标已是符号链接：{}", dest.display());
+            }
+        }
+
+        if entry_type.is_dir() {
+            fs::create_dir_all(&dest)?;
+            continue;
+        }
+
+        stats.bytes = stats.bytes.saturating_add(size);
+        if stats.bytes > limits.max_bytes {
+            bail!(
+                "归档解压后 {} 字节超过限额 {} 字节",
+                stats.bytes,
+                limits.max_bytes
+            );
+        }
+        entry
+            .unpack(&dest)
+            .with_context(|| format!("解包 {} 失败", dest.display()))?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dest, fs::Permissions::from_mode(0o644))?;
+        }
+        stats.code_files += 1;
+    }
+
+    Ok(stats)
+}
+
 /// 在定义目录里挑一个工作流文件，返回相对 defs_dir 的路径。
 pub fn pick_definition(defs_dir: &Path) -> Result<String> {
     let mut found: Vec<String> = Vec::new();
@@ -299,6 +380,32 @@ mod tests {
         );
         assert!(!ws.join(".git").exists());
         assert_eq!(pick_definition(&defs).unwrap(), "site.yml");
+    }
+
+    #[test]
+    fn unpacks_plain_archive_without_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let gz = make_tar(
+            tmp.path(),
+            vec![
+                ("README.md", b"hello".as_slice(), tar::EntryType::Regular),
+                (
+                    ".github/workflows/site.yml",
+                    b"name: ci".as_slice(),
+                    tar::EntryType::Regular,
+                ),
+            ],
+        );
+        let ws = tmp.path().join("ws");
+        let stats = unpack_plain(&gz, &ws, &UnpackLimits::default()).unwrap();
+        assert_eq!(stats.code_files, 2);
+        assert!(stats.definition_files.is_empty());
+        assert_eq!(fs::read_to_string(ws.join("README.md")).unwrap(), "hello");
+        assert_eq!(
+            fs::read_to_string(ws.join(".github/workflows/site.yml")).unwrap(),
+            "name: ci"
+        );
+        assert!(!ws.join(".git").exists());
     }
 
     #[test]

@@ -4,10 +4,19 @@ use std::path::PathBuf;
 
 /// 与主服务协商的契约版本。不兼容时主服务不会下发 job，执行器会记
 /// `skipped / incompatible_version`，而不是静默跑错语义。
-pub const PROTOCOL_VERSION: i32 = 1;
+///
+/// v2：执行器直接读写 `/git/<项目>/` 工作树（tree / file / archive +
+/// PUT/DELETE file），claim 新增 `git_base` / `write_ref`。这是**不兼容升级**，
+/// 升级主服务后必须同步升级 KychRunner，否则 claim 会被 400 拒绝。
+pub const PROTOCOL_VERSION: i32 = 2;
 
-/// 唯一的快照来源标识。只做模式 B，心跳里固定上报 "api"。
+/// 模式 B 的来源标识。字段名沿用历史叫法，含义是「只经主服务 HTTP 接口
+/// 取 Git 数据、绝不直连 PostgreSQL」；v2 起具体通道是 `/git/`，但仍不是
+/// PG 直连，故心跳/注册继续上报 `"api"`（服务端校验也保持这个值）。
 pub const SNAPSHOT_SOURCE: &str = "api";
+
+/// v2 的 Git 数据通道名称，仅用于日志与自检展示。
+pub const DATA_CHANNEL: &str = "git-worktree";
 
 #[derive(Parser, Debug)]
 #[command(
@@ -35,8 +44,15 @@ pub enum Command {
         #[arg(long, env = "RUNNER_LABELS", default_value = "")]
         labels: String,
     },
-    /// 长轮询领取 job 并执行。快照只经主服务 /api/runner/jobs/{id}/snapshot 下发
+    /// 长轮询领取 job 并执行。v2 直接读写主服务 /git/<项目>/ 工作树
     Run {
+        #[command(flatten)]
+        cfg: Config,
+    },
+    /// 手工读写 /git/<项目>/ 工作树（运维 / 调试；容器内 step 断网，不直接用）
+    Git {
+        #[command(subcommand)]
+        action: crate::gitcmd::GitAction,
         #[command(flatten)]
         cfg: Config,
     },

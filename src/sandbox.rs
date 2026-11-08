@@ -63,7 +63,11 @@ pub fn write_event_json(path: &Path, claim: &Claim) -> Result<()> {
                 "ref": claim.ref_name,
                 "trust_level": claim.trust_level,
                 "pr_number": claim.pr_number,
-                "snapshot_source": crate::config::SNAPSHOT_SOURCE
+                "protocol_version": crate::config::PROTOCOL_VERSION,
+                "data_channel": crate::config::DATA_CHANNEL,
+                "snapshot_source": crate::config::SNAPSHOT_SOURCE,
+                "git_base": claim.git_base.as_deref(),
+                "write_ref": claim.write_ref.as_deref()
             }),
         );
     }
@@ -90,6 +94,24 @@ pub fn write_env_allowlist(path: &Path, claim: &Claim) -> Result<()> {
         (
             "KYCHNET_PR_NUMBER",
             claim.pr_number.map(|n| n.to_string()).unwrap_or_default(),
+        ),
+        // v2 通道信息：让断网容器里的工作流知道回写清单路径与目标分支。
+        // 绝不注入 RUNNER_TOKEN / Git 令牌 / 数据库凭据。
+        (
+            "KYCHNET_GIT_BASE",
+            claim.git_base.clone().unwrap_or_default(),
+        ),
+        (
+            "KYCHNET_WRITE_REF",
+            claim.write_ref.clone().unwrap_or_default(),
+        ),
+        (
+            "KYCHNET_PUSH_MANIFEST",
+            crate::push::MANIFEST_REL.to_string(),
+        ),
+        (
+            "KYCHNET_PROTOCOL_VERSION",
+            crate::config::PROTOCOL_VERSION.to_string(),
         ),
     ];
     for (k, v) in pairs {

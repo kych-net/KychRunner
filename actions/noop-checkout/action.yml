@@ -1,6 +1,6 @@
 name: 'KychNet Noop Checkout'
 description: >-
-  站内 act 专用：KychRunner 已通过主服务 HTTP 接口取得 tar.gz 快照并把代码铺到工作区，
+  站内 act 专用：KychRunner 已通过主服务 /git/<项目>/ 工作树接口读取归档并把代码铺到工作区，
   工作区没有 .git 目录、也不调用 git。本 action 只是让 actions/checkout@v4 变成 no-op，
   保证同一份工作流在 GitHub Actions 上仍能使用真正的 checkout。
 
@@ -23,7 +23,7 @@ inputs:
     required: false
     default: 'false'
   lfs:
-    description: 忽略（LFS 由主服务打包时还原）
+    description: 忽略（LFS pointer 由主服务工作树接口还原）
     required: false
     default: 'false'
   path:

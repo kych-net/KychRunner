@@ -22,6 +22,13 @@ pub struct Claim {
     #[serde(default)]
     pub ref_name: String,
     pub event: EventPayload,
+    /// protocol v2：`/git/<slug>` 工作树基址。有值时执行器直接读写 `/git/`；
+    /// 为 None 时回退到 v1 的 `/api/runner/jobs/{id}/snapshot` 兼容通道。
+    #[serde(default)]
+    pub git_base: Option<String>,
+    /// protocol v2：允许回写的分支名。tag / 非分支事件为 None，此时禁止回写。
+    #[serde(default)]
+    pub write_ref: Option<String>,
     #[serde(default)]
     pub trust_level: String,
     /// PR / 非默认分支事件恒为空；主服务按 trust_level 强制，不信任 YAML 自声明

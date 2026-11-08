@@ -1,15 +1,17 @@
 mod act;
 mod client;
 mod config;
+mod gitcmd;
 mod job;
 mod log;
+mod push;
 mod runner;
 mod sandbox;
 mod snapshot;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use config::{Cli, Command, Config, PROTOCOL_VERSION};
+use config::{Cli, Command, Config, DATA_CHANNEL, PROTOCOL_VERSION};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,9 +37,10 @@ async fn real_main() -> Result<()> {
     match cli.command {
         Command::Version => {
             println!(
-                "kychrunner {} (protocol {}, snapshot source {})",
+                "kychrunner {} (protocol {}, data channel {}, snapshot source {})",
                 env!("CARGO_PKG_VERSION"),
                 PROTOCOL_VERSION,
+                DATA_CHANNEL,
                 config::SNAPSHOT_SOURCE
             );
         }
@@ -60,6 +63,11 @@ async fn real_main() -> Result<()> {
             let cfg = Arc::new(cfg);
             doctor(cfg.as_ref(), true).await?;
             run_loop(cfg).await?;
+        }
+        Command::Git { action, cfg } => {
+            gitcmd::run(&cfg, action)
+                .await
+                .context("Git 工作树操作失败")?;
         }
         Command::Doctor { cfg } => {
             doctor(&cfg, false).await?;
@@ -148,10 +156,10 @@ async fn run_loop(cfg: Arc<Config>) -> Result<()> {
     let labels = cfg.labels();
     let version = act_version(cfg.as_ref()).await;
     info!(
-        "KychRunner 启动：url={} protocol={} snapshot_source={} labels={:?}",
+        "KychRunner 启动：url={} protocol={} data_channel={} labels={:?}",
         cfg.base_url(),
         PROTOCOL_VERSION,
-        config::SNAPSHOT_SOURCE,
+        DATA_CHANNEL,
         labels
     );
 
