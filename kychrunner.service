@@ -1,0 +1,37 @@
+[Unit]
+Description=KychNet 可选工作流执行器 KychRunner（模式 B）
+Documentation=https://github.com/kych-net/KychRunner
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=kychrunner
+Group=kychrunner
+
+# /etc/kychrunner/env 内只需：
+#   KYCHNET_URL, RUNNER_TOKEN, ACT_BIN, WORK_ROOT, ACTIONS_DIR, ACT_CACHE, RUNNER_IMAGE
+# 模式 B 下没有任何 PostgreSQL 凭据，也不需要挂载 LFS_ROOT。
+EnvironmentFile=/etc/kychrunner/env
+ExecStart=/usr/local/bin/kychrunner run
+Restart=on-failure
+RestartSec=5s
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/kychrunner
+
+# 注意：act 需要访问 Docker socket，故不能把 /var/run/docker.sock 完全隔离；
+# 用专门的低权限用户 + --container-daemon-socket - 阻止把 socket 挂进 job 容器。
+# 如果 runner 与 kych-net 同机，禁止 ReadWritePaths 指向主服务的 CONTENT_ROOT / .env。
+
+[Install]
+WantedBy=multi-user.target

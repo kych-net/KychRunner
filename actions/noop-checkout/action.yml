@@ -1,0 +1,47 @@
+name: 'KychNet Noop Checkout'
+description: >-
+  站内 act 专用：KychRunner 已通过主服务 HTTP 接口取得 tar.gz 快照并把代码铺到工作区，
+  工作区没有 .git 目录、也不调用 git。本 action 只是让 actions/checkout@v4 变成 no-op，
+  保证同一份工作流在 GitHub Actions 上仍能使用真正的 checkout。
+
+# 声明常见输入，避免调用方 with: 里的参数被判为未知。
+inputs:
+  repository:
+    description: 忽略（站内不使用）
+    required: false
+    default: ''
+  ref:
+    description: 忽略
+    required: false
+    default: ''
+  fetch-depth:
+    description: 忽略
+    required: false
+    default: '0'
+  submodules:
+    description: 忽略
+    required: false
+    default: 'false'
+  lfs:
+    description: 忽略（LFS 由主服务打包时还原）
+    required: false
+    default: 'false'
+  path:
+    description: 忽略
+    required: false
+    default: ''
+  token:
+    description: 忽略（执行器没有 git token）
+    required: false
+    default: ''
+  persist-credentials:
+    description: 忽略
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: 代码已由主服务快照铺好
+      run: 'echo "workspace=${GITHUB_WORKSPACE:-.} commit=${KYCHNET_COMMIT_OID:-unknown} ref=${KYCHNET_REF:-unknown}"'
+      shell: bash
