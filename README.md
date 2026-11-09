@@ -37,6 +37,9 @@ v2 起直接走 `/git/<项目>/` 工作树接口，不再默认使用打包下�
 | 调 `nektos/act` 在断网 Docker 容器里跑 GitHub Actions 语法工作流 | 不实现自有 DSL、不实现 Actions 全语法 |
 | 按 `trust_level` 隔离 PR 工作流（无 secrets、不得发布） | 不自行决定信任级别 |
 
+> 注意：解包统一落 0644 权限，Git 里的可执行位不会保留。工作流里需要可执行文件时
+> 在 step 里显式 `chmod +x`。
+
 ## 工作流语义
 
 - 定义默认在仓库 `.github/workflows/*.yml`，项目级 `workflow_dir` 可覆盖，对齐 GitHub Actions。
@@ -63,7 +66,8 @@ v2 起直接走 `/git/<项目>/` 工作树接口，不再默认使用打包下�
 }
 ```
 
-- `ref` 省略时用 `claim.write_ref`；tag / 非分支事件没有可写分支，回写会失败。
+- 回写分支由 `claim.write_ref` 决定，清单里**不接受 `ref` 字段**（写了直接报错）；
+  tag / 非分支事件没有可写分支，回写会失败。
 - runner 只在 **act 成功**后回写；失败把 run 标为 `failure`。
 - 每个路径生成一个 commit，作者记为 `kychrunner`；**不会自动 diff 工作区**，
   临时文件 / 缓存 / 依赖目录不会意外进仓库。
@@ -85,6 +89,9 @@ kychrunner version   # 版本 + 协议版本 + 数据通道
 kychrunner doctor    # 环境自检：act / Docker / 目录权限，不连主服务
 
 # 手工读写 /git/<项目>/ 工作树（运维 / 调试）
+# 注意：写操作复用 runner token，受服务端 runner_write_scope 限制——
+# 仅当该执行器当前有「租约有效」的 in_progress run 时才可能成功；
+# 没有正在执行的 run 时写会返回 401/403，这是预期行为而非故障。
 kychrunner git tree    --base /git/demo --ref main --path docs
 kychrunner git file    --base /git/demo --ref main --path README.md --output /tmp/README.md
 kychrunner git archive --base /git/demo --ref <40位commit> --output /tmp/tree.tar.gz

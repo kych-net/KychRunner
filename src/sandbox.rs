@@ -31,6 +31,12 @@ pub fn create_layout(root: &Path, run_id: &str) -> Result<Layout> {
             .with_context(|| format!("清理旧的 {} 失败", run_dir.display()))?;
     }
     fs::create_dir_all(&run_dir).with_context(|| format!("创建 {} 失败", run_dir.display()))?;
+    // run 目录只允许执行器用户访问，secrets 等注入文件不暴露给本机其他用户。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&run_dir, fs::Permissions::from_mode(0o700))?;
+    }
     Ok(Layout {
         workspace: run_dir.join("workspace"),
         defs_dir: run_dir.join("definitions"),
@@ -72,7 +78,22 @@ pub fn write_event_json(path: &Path, claim: &Claim) -> Result<()> {
         );
     }
     fs::write(path, serde_json::to_vec_pretty(&payload)?)
-        .with_context(|| format!("写 {} 失败", path.display()))
+        .with_context(|| format!("写 {} 失败", path.display()))?;
+    restrict_owner_only(path)?;
+    Ok(())
+}
+
+/// 注入文件（event.json / env / secrets）只允许执行器用户读写。
+#[cfg(unix)]
+fn restrict_owner_only(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("收紧 {} 权限失败", path.display()))
+}
+
+#[cfg(not(unix))]
+fn restrict_owner_only(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 /// act 的 --env-file。只有这些变量会进入 job 容器。
@@ -120,6 +141,8 @@ pub fn write_env_allowlist(path: &Path, claim: &Claim) -> Result<()> {
         }
         writeln!(f, "{k}={v}")?;
     }
+    drop(f);
+    restrict_owner_only(path)?;
     Ok(())
 }
 
@@ -140,6 +163,8 @@ pub fn write_secrets(path: &Path, claim: &Claim) -> Result<BTreeMap<String, Stri
         writeln!(f, "{k}={v}")?;
         out.insert(k.clone(), v.clone());
     }
+    drop(f);
+    restrict_owner_only(path)?;
     Ok(out)
 }
 

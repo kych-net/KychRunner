@@ -195,25 +195,39 @@ async fn run_loop(cfg: Arc<Config>) -> Result<()> {
     let term_fut = std::future::pending::<()>();
     tokio::pin!(term_fut);
 
+    // claim 连续失败退避：失败后先等 1s，之后翻倍封顶 60s；成功即复位。
+    // 持续失败（如主站升级后协议不匹配返回 400）不会无限刷日志。
+    let mut claim_backoff = Duration::ZERO;
+
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => { info!("收到 SIGINT，退出"); break; }
             _ = &mut term_fut => { info!("收到 SIGTERM，退出"); break; }
-            res = client.claim(&labels, cfg.claim_timeout_secs) => {
+            _ = tokio::time::sleep(claim_backoff), if claim_backoff > Duration::ZERO => {
+                // 退避窗口也放在 select 里，保证信号即时退出。
+                claim_backoff = claim_backoff.saturating_mul(2).min(Duration::from_secs(60));
+                continue;
+            }
+            res = client.claim(&labels, cfg.claim_timeout_secs), if claim_backoff == Duration::ZERO => {
                 match res {
                     Ok(Some(claim)) => {
                         info!(
                             "领取 job run_id={} attempt={} workflow={:?} trust={}",
                             claim.run_id, claim.attempt, claim.workflow_path, claim.trust_level
                         );
+                        claim_backoff = Duration::ZERO;
                         if let Err(e) = runner::execute(cfg.clone(), client.clone(), claim).await {
                             error!("job 执行失败：{e:#}");
                         }
                     }
-                    Ok(None) => {} // 204：队列为空，继续长轮询
+                    Ok(None) => {
+                        // 204：队列为空，继续长轮询。空轮询不算失败，复位退避。
+                        claim_backoff = Duration::ZERO;
+                    }
                     Err(e) => {
-                        warn!("claim 失败：{e:#}");
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        let wait = claim_backoff.max(Duration::from_secs(1));
+                        warn!("claim 失败：{e:#}；{}s 后重试", wait.as_secs());
+                        claim_backoff = wait;
                     }
                 }
             }

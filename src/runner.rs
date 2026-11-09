@@ -185,7 +185,7 @@ async fn run_inner(
 
     let redactor = Redactor::new(&secrets);
     let max_log = claim.limits.max_log_bytes.min(cfg.max_log_bytes) as usize;
-    let mut batcher = LogBatcher::new(32 * 1024, 20, max_log);
+    let mut batcher = LogBatcher::new(32 * 1024, 20);
     let mut seq: u64 = 0;
     let mut logged: usize = 0;
     let mut step_buf: Vec<StepReport> = Vec::new();

@@ -39,7 +39,7 @@ pub struct LogBatcher {
 }
 
 impl LogBatcher {
-    pub fn new(max_bytes: usize, max_lines: usize, _total_limit: usize) -> Self {
+    pub fn new(max_bytes: usize, max_lines: usize) -> Self {
         Self {
             buf: Vec::new(),
             bytes: 0,
@@ -79,20 +79,20 @@ mod tests {
 
     #[test]
     fn batcher_flushes_on_size_and_lines() {
-        let mut b = LogBatcher::new(10, 3, 1000);
+        let mut b = LogBatcher::new(10, 3);
         assert!(b.push("a".into()).is_none());
         assert!(b.push("b".into()).is_none());
         let chunk = b.push("c".into()).unwrap();
         assert_eq!(chunk, vec!["a", "b", "c"]);
         assert!(b.take().is_empty());
 
-        let mut b2 = LogBatcher::new(4, 100, 1000);
+        let mut b2 = LogBatcher::new(4, 100);
         assert_eq!(b2.push("abcdefgh".into()).unwrap().len(), 1);
     }
 
     #[test]
     fn batches_by_byte_threshold() {
-        let mut b = LogBatcher::new(6, 100, 1000);
+        let mut b = LogBatcher::new(6, 100);
         assert!(b.push("ab".into()).is_none());
         let chunk = b.push("cdef".into()).unwrap();
         assert_eq!(chunk.len(), 2);

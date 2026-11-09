@@ -25,13 +25,14 @@ pub const MAX_MANIFEST_BYTES: u64 = 64 * 1024;
 /// 清单格式（写在工作区根下）：
 ///
 /// ```json
-/// { "ref": "main", "message": "chore: 生成产物",
+/// { "message": "chore: 生成产物",
 ///   "files": ["dist/report.txt", "public/logo.png"],
 ///   "delete": ["old.txt"] }
 /// ```
 ///
-/// `ref` 省略时用 claim 下发的 `write_ref`；tag / 非分支事件没有 write_ref，
-/// 此时回写会直接失败。`files` 里的路径相对工作区，内容作为请求体发送。
+/// 回写分支由主服务 claim 下发的 `write_ref` 决定，清单不接受 `ref` 字段；
+/// tag / 非分支事件没有 write_ref，此时回写会直接失败。
+/// `files` 里的路径相对工作区，内容作为请求体发送。
 #[derive(Debug, Deserialize)]
 pub struct PushManifest {
     #[serde(default, rename = "ref")]
@@ -61,6 +62,12 @@ fn valid_path(value: &str) -> bool {
 }
 
 fn validate(m: &PushManifest) -> Result<()> {
+    // 回写分支一律以 claim 下发的 write_ref 为准（服务端 runner_write_scope
+    // 也会强制分支绑定）。manifest 里写别的 ref 只会让 run 无谓失败，这里
+    // 直接拒绝，避免工作流拿 ref 字段当越权试探口。
+    if m.ref_name.is_some() {
+        bail!("回写清单不接受 ref 字段：回写分支由主服务下发的 write_ref 决定");
+    }
     if m.files.len() + m.delete.len() > MAX_FILES {
         bail!("回写路径数超过上限 {}", MAX_FILES);
     }
@@ -124,10 +131,9 @@ pub async fn apply(client: &Client, claim: &Claim, workspace: &Path) -> Result<P
         .git_base
         .as_deref()
         .context("当前协议不支持 /git/ 回写（claim 缺少 git_base）")?;
-    let branch = manifest
-        .ref_name
+    let branch = claim
+        .write_ref
         .as_deref()
-        .or(claim.write_ref.as_deref())
         .filter(|b| !b.is_empty())
         .context("该事件没有可回写的分支（tag / 非 refs/heads）")?;
 
@@ -210,10 +216,14 @@ mod tests {
         assert!(validate(&dup).is_err());
 
         let ok: PushManifest = serde_json::from_str(
-            r#"{"ref":"main","message":"chore: 产物","files":["dist/a.txt"],"delete":["old.txt"]}"#,
+            r#"{"message":"chore: 产物","files":["dist/a.txt"],"delete":["old.txt"]}"#,
         )
         .unwrap();
         assert!(validate(&ok).is_ok());
-        assert_eq!(ok.ref_name.as_deref(), Some("main"));
+
+        // ref 字段现在被明确拒绝：回写分支由 claim.write_ref 决定。
+        let with_ref: PushManifest =
+            serde_json::from_str(r#"{"ref":"main","files":["a.txt"]}"#).unwrap();
+        assert!(validate(&with_ref).is_err());
     }
 }
