@@ -1,0 +1,30 @@
+[package]
+name = "kychrunner"
+version = "0.1.0"
+edition = "2021"
+description = "KychNet 站内 Git 项目的可选工作流执行器（模式 B：主服务 HTTP 快照契约）"
+license = "MIT"
+repository = "https://github.com/kych-net/KychRunner"
+
+# 模式 B 下执行器只持一个 runner token：不连数据库、不 clone、不创建 .git。
+# 因此这里没有 sqlx / git2 / 任何数据库驱动，也没有 act 相关依赖（act 是外部 CLI）。
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+flate2 = "1"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tar = "0.4"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "io-util", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
